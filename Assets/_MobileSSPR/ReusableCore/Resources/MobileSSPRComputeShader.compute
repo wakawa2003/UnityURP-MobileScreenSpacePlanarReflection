@@ -26,7 +26,7 @@ float _FadeOutScreenBorderWidthHorizontal; //compute shader can't declare half t
 float3 _CameraDirection;
 //we found that on metal, UNITY_MATRIX_VP is not correct, so we will pass our own VP matrix to compute shader
 //but UNITY_MATRIX_I_VP is correct, not sure why.
-float4x4 _VPMatrix; 
+float4x4 _VPMatrix;
 float _ScreenLRStretchIntensity;
 float _ScreenLRStretchThreshold;
 float4 _FinalTintColor;
@@ -38,7 +38,7 @@ Texture2D<float> _CameraDepthTexture;
 
 //Non-Mobile path will use this RT: single 32bits RInt RT, split first 16bits for GetReflectionColorFromID's y, last 16bits for GetReflectionColorFromID's x
 //y put in first 16 bits because we want to sort by InterlockedMin(), allowing only "closer to reflection plane candidate" to write to HashRT
-RWTexture2D<uint> HashRT; 
+RWTexture2D<uint> HashRT;
 
 //Mobile(Android) path will use this RT: single 32bit float for posWSy
 RWTexture2D<float> PosWSyRT;
@@ -57,6 +57,7 @@ float3 ConvertScreenIDToPosWS(uint2 id)
 	//https://github.com/Steven-Cannavan/URP_ScreenSpacePlanarReflections/blob/master/Assets/Shaders/ReflectionShader.compute#L75
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	float4 posCS = float4(screenUV * 2.0 - 1.0, inputPixelRawDepth, 1.0); //reconstruct posCS using screen [0,1] uv & rawDepth
+	posCS.y = -posCS.y;
 	float4 posHWS = mul(UNITY_MATRIX_I_VP, posCS); //posCS -> posHWS
 	float3 posWS = posHWS.xyz / posHWS.w; //posHWS -> posWS
 
@@ -106,7 +107,7 @@ float2 ConvertReflectedPosWSToScreenUV(float3 reflectedPosWS)
 	reflectedScreenUV.x = reflectedScreenUV.x * 2 - 1;
 	reflectedScreenUV.x *= 1 + HeightStretch * AngleStretch * ScreenStretch * Intensity;
 	reflectedScreenUV.x = saturate(reflectedScreenUV.x * 0.5 + 0.5);
-	
+
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	//flip UV according to platform 
 	//ref: https://github.com/Steven-Cannavan/URP_ScreenSpacePlanarReflections/blob/master/Assets/Shaders/ReflectionShader.compute#L95
@@ -120,7 +121,7 @@ float2 ConvertReflectedPosWSToScreenUV(float3 reflectedPosWS)
 half ConvertOpaqueColorRTScreenUVToFadeAlphaParam(float2 screenUV, float reflectedPosWSy)
 {
 	//fadeout  using vertical uv.y (only fadeout if reaching _CameraOpaqueTexture's uv border top)
-	half fadeoutAlpha = smoothstep(1, 1-_FadeOutScreenBorderWidthVerticle, screenUV.y);
+	half fadeoutAlpha = smoothstep(1, 1 - _FadeOutScreenBorderWidthVerticle, screenUV.y);
 	//fadeout using horizontal uv.x
 	//TODO: better fadeout
 	fadeoutAlpha *= smoothstep(1, 1 - _FadeOutScreenBorderWidthHorizontal * -reflectedPosWSy, abs(screenUV.x * 2 - 1));
@@ -145,7 +146,7 @@ void NonMobilePathClear(uint3 id : SV_DispatchThreadID)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma kernel NonMobilePathRenderHashRT
 
-[numthreads(NUMTHREAD_X,NUMTHREAD_Y,1)]
+[numthreads(NUMTHREAD_X, NUMTHREAD_Y, 1)]
 void NonMobilePathRenderHashRT(uint3 id : SV_DispatchThreadID)
 {
 	////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -157,7 +158,7 @@ void NonMobilePathRenderHashRT(uint3 id : SV_DispatchThreadID)
 	//if posWS is already under reflection plane (e.g. under water plane), 
 	//it will never be a correct color to reflect anyway, early exit to prevent wrong result write to Color RT
 	////////////////////////////////////////////////////////////////////////////////////////////////////
-	if(posWS.y <= _HorizontalPlaneHeightWS)
+	if (posWS.y <= _HorizontalPlaneHeightWS)
 		return;
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -183,7 +184,7 @@ void NonMobilePathRenderHashRT(uint3 id : SV_DispatchThreadID)
 	Read-write max when accessing the projection hash UAV
 
 	//sample code from above site, "Hash resolve" section
-	uint projectionHash = SrcPosPixel.y << 16 | SrcPosPixel.x; 
+	uint projectionHash = SrcPosPixel.y << 16 | SrcPosPixel.x;
 	InterlockedMax(ProjectionHashUAV[ReflPosPixel], projectionHash, dontCare);
 	*/
 
@@ -201,7 +202,7 @@ void NonMobilePathRenderHashRT(uint3 id : SV_DispatchThreadID)
 #if SHADER_API_METAL
 	//do nothing because metal will never use this kernel (NonMobile kernel)
 #else
-	InterlockedMin(HashRT[reflectedScreenID],hash); //correct sorting method, sort by id.y
+	InterlockedMin(HashRT[reflectedScreenID], hash); //correct sorting method, sort by id.y
 #endif
 	//HashRT[reflectedScreenID] = hash; //no sorting method, don't use it, it will produce random flickering because of unknown order write(random order)
 }
@@ -218,7 +219,7 @@ void NonMobilePathResolveColorRT(uint3 id : SV_DispatchThreadID)
 	/*
 	//ref code
 	//http://remi-genin.fr/blog/screen-space-plane-indexed-reflection-in-ghost-recon-wildlands/#hash-resolve-jump
-	
+
 	float4 PS_ResolveHash(float2 ScreenUV) : SV_Target0
 	{
 		uint Hash = ProjectionHashTex[ScreenUV * FrameSize].x;
@@ -233,13 +234,13 @@ void NonMobilePathResolveColorRT(uint3 id : SV_DispatchThreadID)
 			return 0;
 	}
 	*/
-	uint packedData = HashRT[id.xy];	
+	uint packedData = HashRT[id.xy];
 	if (packedData == MAX_UINT) //MAX_UINT == max uint
 	{
 		//if this location is not having any reflection data (still containing clear value, still 0 reflection write), early exit to prevent wrong RT write
 		ColorRT[id.xy] = 0;
 		return;
-	}	
+	}
 
 	//ghost-recon-wildlands method use 16bit y, 16bit x encode
 	//but in our implementation, 16bit is overkill because we don't need a RT that is 65536*65536
@@ -265,14 +266,14 @@ void NonMobilePathResolveColorRT(uint3 id : SV_DispatchThreadID)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma kernel MobilePathSinglePassColorRTDirectResolve
 
-[numthreads(NUMTHREAD_X,NUMTHREAD_Y,1)]
+[numthreads(NUMTHREAD_X, NUMTHREAD_Y, 1)]
 void MobilePathSinglePassColorRTDirectResolve(uint3 id : SV_DispatchThreadID)
 {
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	//Clear
 	////////////////////////////////////////////////////////////////////////////////////////////////////
-    ColorRT[uint2(id.xy)] = half4(0,0,0,0);//black rgb and alpha = 0. alpha 0 means no valid SSPR pixels found, so reflection plane will not use SSRP's result     
-    PosWSyRT[uint2(id.xy)] = 9999999;//a very high posWS.y as clear value
+	ColorRT[uint2(id.xy)] = half4(0, 0, 0, 0);//black rgb and alpha = 0. alpha 0 means no valid SSPR pixels found, so reflection plane will not use SSRP's result     
+	PosWSyRT[uint2(id.xy)] = 9999999;//a very high posWS.y as clear value
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	//ConvertScreenIDToPosWS
@@ -283,7 +284,7 @@ void MobilePathSinglePassColorRTDirectResolve(uint3 id : SV_DispatchThreadID)
 	//if posWS is already under reflection plane (e.g. under water plane), 
 	//it will never be a correct color to reflect anyway, early exit to prevent wrong result write to Color RT
 	////////////////////////////////////////////////////////////////////////////////////////////////////
-	if(posWS.y <= _HorizontalPlaneHeightWS)
+	if (posWS.y <= _HorizontalPlaneHeightWS)
 		return;
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -297,14 +298,14 @@ void MobilePathSinglePassColorRTDirectResolve(uint3 id : SV_DispatchThreadID)
 	float2 reflectedScreenUV = ConvertReflectedPosWSToScreenUV(reflectedPosWS);
 	//early exit if not valid uv anymore, to avoid out of bound access
 	float2 earlyExitTest = abs(reflectedScreenUV - 0.5);
-	if (earlyExitTest.x >= 0.5 || earlyExitTest.y >= 0.5) 
+	if (earlyExitTest.x >= 0.5 || earlyExitTest.y >= 0.5)
 		return;
 	uint2 reflectedScreenID = reflectedScreenUV * _RTSize;//from screen uv[0,1] to [0,RTSize-1]
-	
+
 	//because writes to ColorRT are in an unknown random order(there can be >1 candidates writing to the same slot in the same dispatch call!),
 	//here we only allow "closer to horizontal reflection plane's candidate" to write to ColorRT & PosWSyRT.
 	//At the end, only the "closest to horizontal reflection plane candidate" will remain in ColorRT & PosWSyRT, which is the correct reflection data
-	if(posWS.y < PosWSyRT[reflectedScreenID])
+	if (posWS.y < PosWSyRT[reflectedScreenID])
 	{
 		float2 screenUV = id.xy / _RTSize;
 		half3 inputPixelSceneColor = _CameraOpaqueTexture.SampleLevel(LinearClampSampler, screenUV, 0).rgb;
@@ -314,7 +315,7 @@ void MobilePathSinglePassColorRTDirectResolve(uint3 id : SV_DispatchThreadID)
 		//we write the following data to 2 RTs:
 		//-ColorRT.rgba = current best reflection color and alpha(alpha means SSPR usage %)
 		//-PosWSyRT.r = current lowest PosyWS (concept similar to a regular depth buffer ZTest->ZWrite)
-		half4 color = half4(inputPixelSceneColor,fadeoutAlpha) * _FinalTintColor;
+		half4 color = half4(inputPixelSceneColor, fadeoutAlpha) * _FinalTintColor;
 		color.a = saturate(color.a);
 		ColorRT[reflectedScreenID] = color;
 		PosWSyRT[reflectedScreenID] = posWS.y;
