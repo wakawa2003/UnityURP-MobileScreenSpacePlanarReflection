@@ -23,7 +23,7 @@ Shader "MobileSSPR/ExampleShader"
         {
             //================================================================================================
             //if "LightMode"="MobileSSPR", this shader will only draw if MobileSSPRRendererFeature is on
-            Tags { "LightMode"="MobileSSPR" }
+            Tags { "LightMode"="MobileSSPR" } 
             //================================================================================================
 
             HLSLPROGRAM
@@ -107,6 +107,7 @@ Shader "MobileSSPR/ExampleShader"
 
                 half3 finalRGB = lerp(baseColor,resultReflection,reflectionArea);
 
+            
                 return half4(finalRGB,1);
             }
 

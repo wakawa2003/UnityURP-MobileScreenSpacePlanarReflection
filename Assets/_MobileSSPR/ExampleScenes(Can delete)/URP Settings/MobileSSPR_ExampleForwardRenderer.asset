@@ -52,10 +52,10 @@ MonoBehaviour:
   m_Active: 1
   Settings:
     ShouldRenderSSPR: 1
-    HorizontalReflectionPlaneHeightWS: 0.01
+    HorizontalReflectionPlaneHeightWS: 0
     FadeOutScreenBorderWidthVerticle: 0.25
     FadeOutScreenBorderWidthHorizontal: 0.35
-    ScreenLRStretchIntensity: 4
+    ScreenLRStretchIntensity: 0
     ScreenLRStretchThreshold: 0.7
     TintColor: {r: 1, g: 1, b: 1, a: 1}
     RT_height: 512
