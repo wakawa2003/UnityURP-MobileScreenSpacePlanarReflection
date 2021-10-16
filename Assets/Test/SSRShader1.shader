@@ -1,37 +1,177 @@
-// Made with Amplify Shader Editor
-// Available at the Unity Asset Store - http://u3d.as/y3X 
+
 Shader "SSRShader1"
 {
-	Properties
-	{
-		[HideInInspector] __dirty( "", Int ) = 1
-	}
+    Properties
+    {
+        [MainColor] _BaseColor("BaseColor", Color) = (1,1,1,1)
+        [MainTexture] _BaseMap("BaseMap", 2D) = "black" {}
 
-	SubShader
-	{
-		Tags{ "RenderType" = "Opaque"  "Queue" = "Geometry+0" }
-		Cull Back
-		CGPROGRAM
-		#pragma target 3.0
-		#pragma surface surf Standard keepalpha addshadow fullforwardshadows 
-		struct Input
-		{
-			half filler;
-		};
+        _Roughness("_Roughness", range(0,1)) = 0.25
+        [NoScaleOffset]_SSPR_UVNoiseTex("_SSPR_UVNoiseTex", 2D) = "gray" {}
+        _SSPR_NoiseIntensity("_SSPR_NoiseIntensity", range(-0.2,0.2)) = 0.0
 
-		void surf( Input i , inout SurfaceOutputStandard o )
-		{
-			o.Alpha = 1;
-		}
+        _UV_MoveSpeed("_UV_MoveSpeed (xy only)(for things like water flow)", Vector) = (0,0,0,0)
 
-		ENDCG
-	}
-	Fallback "Diffuse"
-	CustomEditor "ASEMaterialInspector"
+        [NoScaleOffset]_ReflectionAreaTex("_ReflectionArea", 2D) = "white" {}
+    }
+
+    SubShader
+    {
+        Pass
+        {
+            //================================================================================================
+            //if "LightMode"="MobileSSPR", this shader will only draw if MobileSSPRRendererFeature is on
+            Tags { "LightMode" = "MobileSSPR" }
+            //================================================================================================
+
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            //================================================================================================
+            #include "Assets/_MobileSSPR/ReusableCore/MobileSSPRInclude.hlsl"
+            #pragma multi_compile _ _MobileSSPR
+            //================================================================================================
+
+            struct Attributes
+            {
+                float4 positionOS   : POSITION;
+                float2 uv           : TEXCOORD0;
+                half3 normal        : NORMAL;
+            };
+
+            struct Varyings
+            {
+                float2 uv           : TEXCOORD0;
+                float4 screenPos    : TEXCOORD1;
+                float3 posWS        : TEXCOORD2;
+                float4 positionHCS  : SV_POSITION;
+                half3 normal        : TEXCOORD3;
+            };
+
+            //textures
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+
+            TEXTURE2D(_SSPR_UVNoiseTex);
+            SAMPLER(sampler_SSPR_UVNoiseTex);
+            TEXTURE2D(_ReflectionAreaTex);
+            SAMPLER(sampler_ReflectionAreaTex);
+
+            //cbuffer
+            CBUFFER_START(UnityPerMaterial)
+            float4 _BaseMap_ST;
+            half4 _BaseColor;
+            half _SSPR_NoiseIntensity;
+            float2 _UV_MoveSpeed;
+            half _Roughness;
+            CBUFFER_END
+
+
+            //ham dung san
+            float FresnelEffect(float3 Normal, float3 ViewDir, float Power)
+            {
+                return pow((1.0 - saturate(dot(normalize(Normal), normalize(ViewDir)))), Power);
+            }
+
+            void Unity_Blend_Screen_float4(float4 Base, float4 Blend, float Opacity, out float4 Out)
+            {
+                Out = 1.0 - (1.0 - Blend) * (1.0 - Base);
+                Out = lerp(Base, Out, Opacity);
+            } 
+            
+            void Unity_Blend_Screen_float4(half3 Base, half3 Blend, float Opacity, out half3 Out)
+            {
+                Out = 1.0 - (1.0 - Blend) * (1.0 - Base);
+                Out = lerp(Base, Out, Opacity);
+            }
+
+            void Unity_Blend_Multiply_float4(half3 Base, half3 Blend, float Opacity, out half3 Out)
+            {
+                Out = Base * Blend;
+                Out = lerp(Base, Out, Opacity);
+            }
+
+            void Unity_Blend_HardLight_float4(half3 Base, half3 Blend, float Opacity, out half3 Out)
+            {
+                half3 result1 = 1.0 - 2.0 * (1.0 - Base) * (1.0 - Blend);
+                half3 result2 = 2.0 * Base * Blend;
+                half3 zeroOrOne = step(Blend, 0.5);
+                Out = result2 * zeroOrOne + (1 - zeroOrOne) * result1;
+                Out = lerp(Base, Out, Opacity);
+            }
+            ////////////////////////////////
+
+
+            Varyings vert(Attributes IN)
+            {
+                Varyings OUT;
+                OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
+                OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap) + _Time.y * _UV_MoveSpeed;
+                OUT.screenPos = ComputeScreenPos(OUT.positionHCS);
+                OUT.posWS = TransformObjectToWorld(IN.positionOS.xyz);
+                OUT.normal = TransformObjectToWorldNormal(IN.normal);
+
+                
+                return OUT;
+            }
+
+            half4 frag(Varyings IN) : SV_Target
+            {
+                //base color
+                half3 baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv) * _BaseColor.rgb;
+
+                //noise texture
+                float2 noise = SAMPLE_TEXTURE2D(_SSPR_UVNoiseTex,sampler_SSPR_UVNoiseTex, IN.uv);
+                noise = noise * 2 - 1;
+                noise.y = -abs(noise); //hide missing data, only allow offset to valid location
+                noise.x *= 0.25;
+                noise *= _SSPR_NoiseIntensity;
+
+                //================================================================================================
+                //GetResultReflection from SSPR
+
+                ReflectionInput reflectionData;
+                reflectionData.posWS = IN.posWS -IN.normal *3;//tao hieu ung that hon
+                reflectionData.screenPos = IN.screenPos;
+                reflectionData.screenSpaceNoise = noise;
+                reflectionData.roughness = _Roughness;
+                reflectionData.SSPR_Usage = _BaseColor.a;
+
+                half3 resultReflection = GetResultReflection(reflectionData);
+                //================================================================================================
+
+                //decide show reflection area
+                //   half3  finalRGB = lerp(baseColor,resultReflection,reflectionArea);//code goc 
+                half reflectionArea = SAMPLE_TEXTURE2D(_ReflectionAreaTex,sampler_ReflectionAreaTex, IN.uv);
+
+                Light light = GetMainLight();
+                half3 lightDirection = light.direction;
+                half3  customLight = dot(lightDirection, IN.normal)*0.5;
+                half3 viewDir=IN.posWS - _WorldSpaceCameraPos;
+
+
+                half3 finalRGB = 1; 
+                
+                float blendValue= FresnelEffect(IN.normal, viewDir, -5);
+                blendValue=smoothstep(0,5,blendValue);
+                blendValue = 1 - abs(blendValue);
+                blendValue=saturate(blendValue)*0.5;
+                Unity_Blend_HardLight_float4(baseColor,customLight, blendValue, finalRGB);
+                
+                blendValue= FresnelEffect(IN.normal, viewDir, 0.2);
+                blendValue=smoothstep(0,2,blendValue);
+                blendValue = 1 - abs(blendValue);
+                blendValue=saturate(blendValue)*0.5;
+                Unity_Blend_HardLight_float4(finalRGB,resultReflection, blendValue*0.3, finalRGB); //blend base color vs reflection
+                finalRGB *= _MainLightColor;
+                
+                return half4(finalRGB,1);
+                
+
+            }
+            ENDHLSL
+        }
+    }
 }
-/*ASEBEGIN
-Version=18900
-441.6;342.4;1172.8;646.2;830.8852;78.53784;1;True;False
-Node;AmplifyShaderEditor.StandardSurfaceOutputNode;0;0,0;Float;False;True;-1;2;ASEMaterialInspector;0;0;Standard;SSRShader1;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;Back;0;False;-1;0;False;-1;False;0;False;-1;0;False;-1;False;0;Opaque;0.5;True;True;0;False;Opaque;;Geometry;All;14;all;True;True;True;True;0;False;-1;False;0;False;-1;255;False;-1;255;False;-1;0;False;-1;0;False;-1;0;False;-1;0;False;-1;0;False;-1;0;False;-1;0;False;-1;0;False;-1;False;2;15;10;25;False;0.5;True;0;0;False;-1;0;False;-1;0;0;False;-1;0;False;-1;0;False;-1;0;False;-1;0;False;0;0,0,0,0;VertexOffset;True;False;Cylindrical;False;Relative;0;;-1;-1;-1;-1;0;False;0;0;False;-1;-1;0;False;-1;0;0;0;False;0.1;False;-1;0;False;-1;False;16;0;FLOAT3;0,0,0;False;1;FLOAT3;0,0,0;False;2;FLOAT3;0,0,0;False;3;FLOAT;0;False;4;FLOAT;0;False;5;FLOAT;0;False;6;FLOAT3;0,0,0;False;7;FLOAT3;0,0,0;False;8;FLOAT;0;False;9;FLOAT;0;False;10;FLOAT;0;False;13;FLOAT3;0,0,0;False;11;FLOAT3;0,0,0;False;12;FLOAT3;0,0,0;False;14;FLOAT4;0,0,0,0;False;15;FLOAT3;0,0,0;False;0
-ASEEND*/
-//CHKSM=44A235041CD355A0488CDB204E99B19AE7DB8D76
+

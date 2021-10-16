@@ -258,6 +258,7 @@ Shader /*ase_name*/ "Hidden/Universal/Unlit" /*end*/
 			return tess;
 		}
 		#endif //ASE_TESS_FUNCS
+
 		ENDHLSL
 
 		/*ase_pass*/
