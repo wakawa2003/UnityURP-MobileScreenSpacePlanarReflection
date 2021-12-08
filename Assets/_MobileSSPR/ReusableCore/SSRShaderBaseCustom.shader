@@ -1,5 +1,5 @@
 
-Shader "SSRShader1"
+Shader "MobileSSPR/SSRShaderBaseCustom"
 {
     Properties
     {
@@ -13,6 +13,10 @@ Shader "SSRShader1"
         _UV_MoveSpeed("_UV_MoveSpeed (xy only)(for things like water flow)", Vector) = (0,0,0,0)
 
         [NoScaleOffset]_ReflectionAreaTex("_ReflectionArea", 2D) = "white" {}
+         _ReflectionIntensity("_ReflectionIntensity", range(0,1)) = 0.1
+         _PowerReflectionIntensity("_PowerReflectionIntensity", range(0,10)) = 1
+         _Freshnel("_Freshnel", range(-0,20)) = 0.0
+
     }
 
     SubShader
@@ -65,6 +69,10 @@ Shader "SSRShader1"
             half _SSPR_NoiseIntensity;
             float2 _UV_MoveSpeed;
             half _Roughness;
+            half _Freshnel;
+            half _ReflectionIntensity;
+            half _PowerReflectionIntensity;
+
             CBUFFER_END
 
 
@@ -128,44 +136,42 @@ Shader "SSRShader1"
                 noise.x *= 0.25;
                 noise *= _SSPR_NoiseIntensity;
 
+                //get light data
+                Light light = GetMainLight();
+                half3 lightDirection = light.direction;
+                half3  customLight = dot(lightDirection, IN.normal)*0.5;
+                half3 viewDir=_WorldSpaceCameraPos - IN.posWS;
+
+                float blendValue= FresnelEffect(IN.normal, viewDir, 0.5);
+                
                 //================================================================================================
                 //GetResultReflection from SSPR
 
                 ReflectionInput reflectionData;
-                reflectionData.posWS = IN.posWS -IN.normal *3;//tao hieu ung that hon
+                reflectionData.posWS = IN.posWS -IN.normal*3;//tao hieu ung that hon
                 reflectionData.screenPos = IN.screenPos;
-                reflectionData.screenSpaceNoise = noise;
+                reflectionData.screenSpaceNoise = noise*dot(-1,IN.normal);
                 reflectionData.roughness = _Roughness;
                 reflectionData.SSPR_Usage = _BaseColor.a;
 
                 half3 resultReflection = GetResultReflection(reflectionData);
                 //================================================================================================
-
+   
+            
                 //decide show reflection area
                 //   half3  finalRGB = lerp(baseColor,resultReflection,reflectionArea);//code goc 
                 half reflectionArea = SAMPLE_TEXTURE2D(_ReflectionAreaTex,sampler_ReflectionAreaTex, IN.uv);
 
-                Light light = GetMainLight();
-                half3 lightDirection = light.direction;
-                half3  customLight = dot(lightDirection, IN.normal)*0.5;
-                half3 viewDir=IN.posWS - _WorldSpaceCameraPos;
 
 
                 half3 finalRGB = 1; 
-                
-                float blendValue= FresnelEffect(IN.normal, viewDir, -5);
-                blendValue=smoothstep(0,5,blendValue);
-                blendValue = 1 - abs(blendValue);
                 blendValue=saturate(blendValue)*0.5;
                 Unity_Blend_HardLight_float4(baseColor,customLight, blendValue, finalRGB);
-                
-                blendValue= FresnelEffect(IN.normal, viewDir, 0.2);
-                blendValue=smoothstep(0,2,blendValue);
-                blendValue = 1 - abs(blendValue);
-                blendValue=saturate(blendValue)*0.5;
-                Unity_Blend_HardLight_float4(finalRGB,resultReflection, blendValue*0.3, finalRGB); //blend base color vs reflection
-                finalRGB *= _MainLightColor;
-                
+                blendValue= FresnelEffect(IN.normal, viewDir, _Freshnel);
+                blendValue=saturate(blendValue);
+               resultReflection=resultReflection*_PowerReflectionIntensity;
+               Unity_Blend_HardLight_float4(finalRGB,resultReflection, blendValue * _ReflectionIntensity, finalRGB); //blend base color vs reflection
+              
                 return half4(finalRGB,1);
                 
 
